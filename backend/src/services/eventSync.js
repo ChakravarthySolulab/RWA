@@ -2,12 +2,19 @@ const { ethers } = require("ethers");
 const { getContract, getProvider } = require("../config/blockchain");
 const { Transaction, User } = require("../models");
 
+/**
+ * Event Sync Service - Uses polling instead of filters
+ * This is more reliable with public RPC endpoints like Polygon Amoy
+ */
 class EventSyncService {
   constructor() {
     this.contract = null;
     this.provider = null;
     this.isRunning = false;
     this.lastProcessedBlock = 0;
+    this.pollingInterval = null;
+    this.POLLING_INTERVAL_MS = 15000; // 15 seconds
+    this.BLOCKS_PER_QUERY = 100; // Query 100 blocks at a time
   }
 
   async initialize() {
@@ -26,7 +33,7 @@ class EventSyncService {
     }
   }
 
-  // Start listening for events
+  // Start polling for events (more reliable than filters)
   async startListening() {
     if (this.isRunning) {
       console.log("Event sync is already running");
@@ -42,122 +49,149 @@ class EventSyncService {
     }
 
     this.isRunning = true;
-    console.log("Starting blockchain event listeners...");
+    console.log("Starting blockchain event polling...");
+    console.log(`Polling interval: ${this.POLLING_INTERVAL_MS / 1000}s`);
 
-    // Listen for Transfer events
-    this.contract.on("Transfer", async (from, to, value, event) => {
-      await this.processTransferEvent(from, to, value, event);
-    });
+    // Start polling
+    this.pollEvents();
+    this.pollingInterval = setInterval(() => {
+      this.pollEvents();
+    }, this.POLLING_INTERVAL_MS);
 
-    // Listen for TokensMinted events
-    this.contract.on("TokensMinted", async (to, amount, reason, event) => {
-      await this.processMintEvent(to, amount, reason, event);
-    });
-
-    // Listen for TokensBurned events
-    this.contract.on("TokensBurned", async (from, amount, reason, event) => {
-      await this.processBurnEvent(from, amount, reason, event);
-    });
-
-    // Listen for WhitelistUpdated events
-    this.contract.on("WhitelistUpdated", async (account, status, event) => {
-      await this.processWhitelistEvent(account, status, event);
-    });
-
-    // Listen for Paused event
-    this.contract.on("Paused", async (account, event) => {
-      await this.processPauseEvent(account, true, event);
-    });
-
-    // Listen for Unpaused event
-    this.contract.on("Unpaused", async (account, event) => {
-      await this.processPauseEvent(account, false, event);
-    });
-
-    // Listen for RoleGranted events
-    this.contract.on("RoleGranted", async (role, account, sender, event) => {
-      await this.processRoleEvent(role, account, sender, true, event);
-    });
-
-    // Listen for RoleRevoked events
-    this.contract.on("RoleRevoked", async (role, account, sender, event) => {
-      await this.processRoleEvent(role, account, sender, false, event);
-    });
-
-    // Listen for AssetMetadataUpdated events
-    this.contract.on(
-      "AssetMetadataUpdated",
-      async (commodityType, unit, totalQuantity, storageLocation, certificationHash, event) => {
-        await this.processMetadataEvent(
-          commodityType,
-          unit,
-          totalQuantity,
-          storageLocation,
-          certificationHash,
-          event
-        );
-      }
-    );
-
-    console.log("Event listeners started successfully");
+    console.log("Event polling started successfully");
   }
 
-  // Stop listening for events
+  // Poll for new events
+  async pollEvents() {
+    try {
+      const currentBlock = await this.provider.getBlockNumber();
+
+      if (currentBlock <= this.lastProcessedBlock) {
+        return; // No new blocks
+      }
+
+      const fromBlock = this.lastProcessedBlock + 1;
+      const toBlock = Math.min(fromBlock + this.BLOCKS_PER_QUERY - 1, currentBlock);
+
+      // Query all events in the block range
+      await this.queryEvents(fromBlock, toBlock);
+
+      this.lastProcessedBlock = toBlock;
+    } catch (error) {
+      // Silently handle polling errors to avoid spam
+      if (!error.message.includes("filter not found")) {
+        console.error("Error polling events:", error.message);
+      }
+    }
+  }
+
+  // Query events in a block range
+  async queryEvents(fromBlock, toBlock) {
+    try {
+      // Query Transfer events
+      const transferFilter = this.contract.filters.Transfer();
+      const transferEvents = await this.contract.queryFilter(transferFilter, fromBlock, toBlock);
+      for (const event of transferEvents) {
+        await this.processTransferEvent(event);
+      }
+
+      // Query TokensMinted events
+      const mintFilter = this.contract.filters.TokensMinted();
+      const mintEvents = await this.contract.queryFilter(mintFilter, fromBlock, toBlock);
+      for (const event of mintEvents) {
+        await this.processMintEvent(event);
+      }
+
+      // Query TokensBurned events
+      const burnFilter = this.contract.filters.TokensBurned();
+      const burnEvents = await this.contract.queryFilter(burnFilter, fromBlock, toBlock);
+      for (const event of burnEvents) {
+        await this.processBurnEvent(event);
+      }
+
+      // Query WhitelistUpdated events
+      const whitelistFilter = this.contract.filters.WhitelistUpdated();
+      const whitelistEvents = await this.contract.queryFilter(whitelistFilter, fromBlock, toBlock);
+      for (const event of whitelistEvents) {
+        await this.processWhitelistEvent(event);
+      }
+
+      // Query Paused/Unpaused events
+      const pausedFilter = this.contract.filters.Paused();
+      const pausedEvents = await this.contract.queryFilter(pausedFilter, fromBlock, toBlock);
+      for (const event of pausedEvents) {
+        await this.processPauseEvent(event, true);
+      }
+
+      const unpausedFilter = this.contract.filters.Unpaused();
+      const unpausedEvents = await this.contract.queryFilter(unpausedFilter, fromBlock, toBlock);
+      for (const event of unpausedEvents) {
+        await this.processPauseEvent(event, false);
+      }
+
+    } catch (error) {
+      // Silently handle query errors
+      if (!error.message.includes("filter not found")) {
+        console.error("Error querying events:", error.message);
+      }
+    }
+  }
+
+  // Stop polling
   stopListening() {
-    if (this.contract) {
-      this.contract.removeAllListeners();
-      console.log("Event listeners stopped");
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+      console.log("Event polling stopped");
     }
     this.isRunning = false;
   }
 
   // Process Transfer event
-  async processTransferEvent(from, to, value, event) {
+  async processTransferEvent(event) {
     try {
-      const txHash = event.log.transactionHash;
+      const txHash = event.transactionHash;
 
       // Check if already processed
-      const exists = await Transaction.findOne({ txHash });
+      const exists = await Transaction.findOne({ txHash, eventType: "Transfer" });
       if (exists) return;
 
-      const block = await this.provider.getBlock(event.log.blockNumber);
+      const [from, to, value] = event.args;
+      const block = await this.provider.getBlock(event.blockNumber);
 
       await Transaction.create({
         txHash,
-        blockNumber: event.log.blockNumber,
-        blockTimestamp: new Date(block.timestamp * 1000),
+        blockNumber: event.blockNumber,
+        blockTimestamp: block ? new Date(block.timestamp * 1000) : new Date(),
         eventType: "Transfer",
         from: from.toLowerCase(),
         to: to.toLowerCase(),
         amount: value.toString(),
         amountFormatted: parseFloat(ethers.formatEther(value)),
-        rawData: {
-          from,
-          to,
-          value: value.toString(),
-        },
+        rawData: { from, to, value: value.toString() },
       });
 
-      console.log(`Transfer event processed: ${txHash}`);
+      console.log(`Transfer event processed: ${txHash.slice(0, 10)}...`);
     } catch (error) {
-      console.error("Error processing transfer event:", error);
+      console.error("Error processing transfer event:", error.message);
     }
   }
 
   // Process Mint event
-  async processMintEvent(to, amount, reason, event) {
+  async processMintEvent(event) {
     try {
-      const txHash = event.log.transactionHash;
+      const txHash = event.transactionHash;
 
       const exists = await Transaction.findOne({ txHash, eventType: "Mint" });
       if (exists) return;
 
-      const block = await this.provider.getBlock(event.log.blockNumber);
+      const [to, amount, reason] = event.args;
+      const block = await this.provider.getBlock(event.blockNumber);
 
       await Transaction.create({
         txHash,
-        blockNumber: event.log.blockNumber,
-        blockTimestamp: new Date(block.timestamp * 1000),
+        blockNumber: event.blockNumber,
+        blockTimestamp: block ? new Date(block.timestamp * 1000) : new Date(),
         eventType: "Mint",
         to: to.toLowerCase(),
         amount: amount.toString(),
@@ -166,26 +200,27 @@ class EventSyncService {
         rawData: { to, amount: amount.toString(), reason },
       });
 
-      console.log(`Mint event processed: ${txHash}`);
+      console.log(`Mint event processed: ${txHash.slice(0, 10)}...`);
     } catch (error) {
-      console.error("Error processing mint event:", error);
+      console.error("Error processing mint event:", error.message);
     }
   }
 
   // Process Burn event
-  async processBurnEvent(from, amount, reason, event) {
+  async processBurnEvent(event) {
     try {
-      const txHash = event.log.transactionHash;
+      const txHash = event.transactionHash;
 
       const exists = await Transaction.findOne({ txHash, eventType: "Burn" });
       if (exists) return;
 
-      const block = await this.provider.getBlock(event.log.blockNumber);
+      const [from, amount, reason] = event.args;
+      const block = await this.provider.getBlock(event.blockNumber);
 
       await Transaction.create({
         txHash,
-        blockNumber: event.log.blockNumber,
-        blockTimestamp: new Date(block.timestamp * 1000),
+        blockNumber: event.blockNumber,
+        blockTimestamp: block ? new Date(block.timestamp * 1000) : new Date(),
         eventType: "Burn",
         from: from.toLowerCase(),
         amount: amount.toString(),
@@ -194,26 +229,27 @@ class EventSyncService {
         rawData: { from, amount: amount.toString(), reason },
       });
 
-      console.log(`Burn event processed: ${txHash}`);
+      console.log(`Burn event processed: ${txHash.slice(0, 10)}...`);
     } catch (error) {
-      console.error("Error processing burn event:", error);
+      console.error("Error processing burn event:", error.message);
     }
   }
 
   // Process Whitelist event
-  async processWhitelistEvent(account, status, event) {
+  async processWhitelistEvent(event) {
     try {
-      const txHash = event.log.transactionHash;
+      const txHash = event.transactionHash;
 
       const exists = await Transaction.findOne({ txHash, eventType: "WhitelistUpdated" });
       if (exists) return;
 
-      const block = await this.provider.getBlock(event.log.blockNumber);
+      const [account, status] = event.args;
+      const block = await this.provider.getBlock(event.blockNumber);
 
       await Transaction.create({
         txHash,
-        blockNumber: event.log.blockNumber,
-        blockTimestamp: new Date(block.timestamp * 1000),
+        blockNumber: event.blockNumber,
+        blockTimestamp: block ? new Date(block.timestamp * 1000) : new Date(),
         eventType: "WhitelistUpdated",
         account: account.toLowerCase(),
         whitelistStatus: status,
@@ -226,102 +262,36 @@ class EventSyncService {
         { isWhitelisted: status }
       );
 
-      console.log(`Whitelist event processed: ${txHash}`);
+      console.log(`Whitelist event processed: ${txHash.slice(0, 10)}...`);
     } catch (error) {
-      console.error("Error processing whitelist event:", error);
+      console.error("Error processing whitelist event:", error.message);
     }
   }
 
   // Process Pause/Unpause event
-  async processPauseEvent(account, paused, event) {
+  async processPauseEvent(event, paused) {
     try {
-      const txHash = event.log.transactionHash;
+      const txHash = event.transactionHash;
       const eventType = paused ? "Paused" : "Unpaused";
 
       const exists = await Transaction.findOne({ txHash, eventType });
       if (exists) return;
 
-      const block = await this.provider.getBlock(event.log.blockNumber);
+      const [account] = event.args;
+      const block = await this.provider.getBlock(event.blockNumber);
 
       await Transaction.create({
         txHash,
-        blockNumber: event.log.blockNumber,
-        blockTimestamp: new Date(block.timestamp * 1000),
+        blockNumber: event.blockNumber,
+        blockTimestamp: block ? new Date(block.timestamp * 1000) : new Date(),
         eventType,
         account: account.toLowerCase(),
         rawData: { account, paused },
       });
 
-      console.log(`${eventType} event processed: ${txHash}`);
+      console.log(`${eventType} event processed: ${txHash.slice(0, 10)}...`);
     } catch (error) {
-      console.error("Error processing pause event:", error);
-    }
-  }
-
-  // Process Role event
-  async processRoleEvent(role, account, sender, granted, event) {
-    try {
-      const txHash = event.log.transactionHash;
-      const eventType = granted ? "RoleGranted" : "RoleRevoked";
-
-      const exists = await Transaction.findOne({ txHash, eventType, account: account.toLowerCase() });
-      if (exists) return;
-
-      const block = await this.provider.getBlock(event.log.blockNumber);
-
-      // Decode role name
-      let roleName = role;
-      const ADMIN_ROLE = ethers.id("ADMIN_ROLE");
-      const ISSUER_ROLE = ethers.id("ISSUER_ROLE");
-
-      if (role === ADMIN_ROLE) roleName = "ADMIN_ROLE";
-      else if (role === ISSUER_ROLE) roleName = "ISSUER_ROLE";
-      else if (role === ethers.ZeroHash) roleName = "DEFAULT_ADMIN_ROLE";
-
-      await Transaction.create({
-        txHash,
-        blockNumber: event.log.blockNumber,
-        blockTimestamp: new Date(block.timestamp * 1000),
-        eventType,
-        account: account.toLowerCase(),
-        from: sender.toLowerCase(),
-        role: roleName,
-        rawData: { role, account, sender, granted },
-      });
-
-      console.log(`${eventType} event processed: ${txHash}`);
-    } catch (error) {
-      console.error("Error processing role event:", error);
-    }
-  }
-
-  // Process Metadata event
-  async processMetadataEvent(commodityType, unit, totalQuantity, storageLocation, certificationHash, event) {
-    try {
-      const txHash = event.log.transactionHash;
-
-      const exists = await Transaction.findOne({ txHash, eventType: "AssetMetadataUpdated" });
-      if (exists) return;
-
-      const block = await this.provider.getBlock(event.log.blockNumber);
-
-      await Transaction.create({
-        txHash,
-        blockNumber: event.log.blockNumber,
-        blockTimestamp: new Date(block.timestamp * 1000),
-        eventType: "AssetMetadataUpdated",
-        rawData: {
-          commodityType,
-          unit,
-          totalQuantity: totalQuantity.toString(),
-          storageLocation,
-          certificationHash,
-        },
-      });
-
-      console.log(`AssetMetadataUpdated event processed: ${txHash}`);
-    } catch (error) {
-      console.error("Error processing metadata event:", error);
+      console.error("Error processing pause event:", error.message);
     }
   }
 
