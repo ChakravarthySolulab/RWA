@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RWA Commodities - Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      color: #fff;
+    }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 0;
+      border-bottom: 1px solid #333;
+      margin-bottom: 30px;
+    }
+    h1 { color: #ffd700; font-size: 1.8em; }
+    .connect-btn {
+      background: linear-gradient(135deg, #f39c12, #e74c3c);
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    .connect-btn:hover { transform: scale(1.05); }
+    .connect-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .connected { background: linear-gradient(135deg, #27ae60, #2ecc71); }
+    .wallet-info {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    .wallet-address {
+      background: rgba(255,255,255,0.1);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 0.9em;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
+    .card {
+      background: rgba(255,255,255,0.05);
+      border-radius: 16px;
+      padding: 24px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .card h2 {
+      color: #ffd700;
+      margin-bottom: 20px;
+      font-size: 1.2em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card h2::before {
+      content: '';
+      width: 4px;
+      height: 20px;
+      background: #ffd700;
+      border-radius: 2px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-label { color: #888; }
+    .info-value { font-weight: 600; color: #fff; }
+    .info-value.gold { color: #ffd700; }
+    .info-value.green { color: #2ecc71; }
+    .info-value.red { color: #e74c3c; }
+    input, select {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #ffd700;
+    }
+    input::placeholder { color: #666; }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 8px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 8px;
+    }
+    .btn-primary { background: linear-gradient(135deg, #3498db, #2980b9); color: white; }
+    .btn-success { background: linear-gradient(135deg, #27ae60, #2ecc71); color: white; }
+    .btn-warning { background: linear-gradient(135deg, #f39c12, #e67e22); color: white; }
+    .btn-danger { background: linear-gradient(135deg, #e74c3c, #c0392b); color: white; }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.85em;
+      font-weight: 600;
+    }
+    .status-active { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
+    .status-paused { background: rgba(231, 76, 60, 0.2); color: #e74c3c; }
+    .status-whitelisted { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
+    .status-not-whitelisted { background: rgba(231, 76, 60, 0.2); color: #e74c3c; }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 16px 24px;
+      border-radius: 8px;
+      color: white;
+      font-weight: 500;
+      z-index: 1000;
+      animation: slideIn 0.3s ease;
+      max-width: 400px;
+    }
+    .toast-success { background: #27ae60; }
+    .toast-error { background: #e74c3c; }
+    .toast-info { background: #3498db; }
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    .loading { opacity: 0.7; pointer-events: none; }
+    .tx-link {
+      color: #3498db;
+      text-decoration: none;
+      word-break: break-all;
+    }
+    .tx-link:hover { text-decoration: underline; }
+    .section-title {
+      font-size: 1.4em;
+      color: #ffd700;
+      margin: 30px 0 20px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid rgba(255,215,0,0.3);
+    }
+    .hidden { display: none !important; }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: #aaa;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🪙 RWA Commodities Platform</h1>
+      <div class="wallet-info">
+        <span id="walletAddress" class="wallet-address hidden"></span>
+        <button id="connectBtn" class="connect-btn" onclick="connectWallet()">
+          Connect MetaMask
+        </button>
+      </div>
+    </header>
+
+    <!-- Token Info Section -->
+    <div class="grid">
+      <div class="card">
+        <h2>Token Information</h2>
+        <div class="info-row">
+          <span class="info-label">Name</span>
+          <span class="info-value" id="tokenName">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Symbol</span>
+          <span class="info-value gold" id="tokenSymbol">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Total Supply</span>
+          <span class="info-value" id="totalSupply">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Contract Status</span>
+          <span id="contractStatus">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Contract</span>
+          <a class="tx-link" id="contractLink" href="#" target="_blank">View on Polygonscan</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Your Account</h2>
+        <div class="info-row">
+          <span class="info-label">Your Balance</span>
+          <span class="info-value gold" id="userBalance">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Whitelist Status</span>
+          <span id="whitelistStatus">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Role</span>
+          <span class="info-value" id="userRole">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Auth Status</span>
+          <span id="authStatus">-</span>
+        </div>
+        <button class="btn btn-primary" onclick="refreshData()" style="margin-top: 15px;">
+          🔄 Refresh Data
+        </button>
+      </div>
+
+      <div class="card">
+        <h2>Asset Metadata</h2>
+        <div class="info-row">
+          <span class="info-label">Commodity Type</span>
+          <span class="info-value gold" id="commodityType">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Unit</span>
+          <span class="info-value" id="commodityUnit">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Total Quantity</span>
+          <span class="info-value" id="totalQuantity">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Storage Location</span>
+          <span class="info-value" id="storageLocation">-</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Operations Section -->
+    <h3 class="section-title">Token Operations</h3>
+    <div class="grid">
+      <!-- Mint Tokens -->
+      <div class="card">
+        <h2>Mint Tokens (Issuer Only)</h2>
+        <label>Recipient Address</label>
+        <input type="text" id="mintTo" placeholder="0x...">
+        <label>Amount</label>
+        <input type="number" id="mintAmount" placeholder="100" step="0.01">
+        <label>Reason</label>
+        <input type="text" id="mintReason" placeholder="Initial allocation">
+        <button class="btn btn-success" onclick="mintTokens()">🪙 Mint Tokens</button>
+      </div>
+
+      <!-- Transfer Tokens -->
+      <div class="card">
+        <h2>Transfer Tokens</h2>
+        <label>Recipient Address</label>
+        <input type="text" id="transferTo" placeholder="0x...">
+        <label>Amount</label>
+        <input type="number" id="transferAmount" placeholder="50" step="0.01">
+        <button class="btn btn-primary" onclick="transferTokens()">📤 Transfer</button>
+      </div>
+
+      <!-- Burn Tokens -->
+      <div class="card">
+        <h2>Burn Tokens</h2>
+        <label>Amount</label>
+        <input type="number" id="burnAmount" placeholder="10" step="0.01">
+        <label>Reason</label>
+        <input type="text" id="burnReason" placeholder="Redemption">
+        <button class="btn btn-danger" onclick="burnTokens()">🔥 Burn Tokens</button>
+      </div>
+    </div>
+
+    <!-- Admin Section -->
+    <h3 class="section-title">Admin Operations</h3>
+    <div class="grid">
+      <!-- Whitelist Management -->
+      <div class="card">
+        <h2>Whitelist Management</h2>
+        <label>Address</label>
+        <input type="text" id="whitelistAddress" placeholder="0x...">
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-success" onclick="addToWhitelist()" style="flex:1;">✅ Add</button>
+          <button class="btn btn-danger" onclick="removeFromWhitelist()" style="flex:1;">❌ Remove</button>
+        </div>
+        <button class="btn btn-primary" onclick="checkWhitelist()" style="margin-top: 10px;">🔍 Check Status</button>
+      </div>
+
+      <!-- Pause/Unpause -->
+      <div class="card">
+        <h2>Contract Control</h2>
+        <p style="color: #888; margin-bottom: 15px;">Pause all token transfers for compliance.</p>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-warning" onclick="pauseContract()" style="flex:1;">⏸️ Pause</button>
+          <button class="btn btn-success" onclick="unpauseContract()" style="flex:1;">▶️ Unpause</button>
+        </div>
+      </div>
+
+      <!-- Check Balance -->
+      <div class="card">
+        <h2>Check Any Balance</h2>
+        <label>Address</label>
+        <input type="text" id="balanceAddress" placeholder="0x...">
+        <button class="btn btn-primary" onclick="checkBalance()">💰 Check Balance</button>
+        <div id="balanceResult" style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px; display: none;">
+          <span class="info-label">Balance:</span>
+          <span class="info-value gold" id="checkedBalance">-</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Assets Section -->
+    <h3 class="section-title">Asset Management</h3>
+    <div class="grid">
+      <div class="card">
+        <h2>Create New Asset</h2>
+        <label>Asset Name</label>
+        <input type="text" id="assetName" placeholder="Gold Bar Lot #001">
+        <label>Commodity Type</label>
+        <select id="assetCommodityType">
+          <option value="GOLD">GOLD</option>
+          <option value="SILVER">SILVER</option>
+          <option value="PLATINUM">PLATINUM</option>
+          <option value="OIL">OIL</option>
+          <option value="OTHER">OTHER</option>
+        </select>
+        <label>Quantity</label>
+        <input type="number" id="assetQuantity" placeholder="100" step="0.01">
+        <label>Unit</label>
+        <select id="assetUnit">
+          <option value="oz">oz (ounces)</option>
+          <option value="g">g (grams)</option>
+          <option value="kg">kg (kilograms)</option>
+          <option value="barrel">barrel</option>
+        </select>
+        <label>Price Per Unit (USD)</label>
+        <input type="number" id="assetPrice" placeholder="1950.50" step="0.01">
+        <button class="btn btn-success" onclick="createAsset()">📦 Create Asset</button>
+      </div>
+
+      <div class="card">
+        <h2>My Assets</h2>
+        <div id="assetsList" style="max-height: 300px; overflow-y: auto;">
+          <p style="color: #666;">Connect wallet to view assets</p>
+        </div>
+        <button class="btn btn-primary" onclick="loadAssets()" style="margin-top: 15px;">🔄 Refresh Assets</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const API_BASE = 'http://localhost:3000/api';
+    const CONTRACT_ADDRESS = '0x0dEAcc5599530b13D18E7C6e405F52a20c64DA0C';
+    const POLYGONSCAN_URL = `https://amoy.polygonscan.com/address/${CONTRACT_ADDRESS}`;
+
+    // State
+    let provider = null;
+    let signer = null;
+    let userAddress = null;
+    let jwtToken = null;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('contractLink').href = POLYGONSCAN_URL;
+      loadTokenInfo();
+
+      if (window.ethereum) {
+        window.ethereum.on('accountsChanged', handleAccountsChanged);
+        window.ethereum.on('chainChanged', () => window.location.reload());
+      }
+    });
+
+    // Toast notifications
+    function showToast(message, type = 'info') {
+      const existing = document.querySelector('.toast');
+      if (existing) existing.remove();
+
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 4000);
+    }
+
+    // Connect wallet
+    async function connectWallet() {
+      if (!window.ethereum) {
+        showToast('Please install MetaMask!', 'error');
+        return;
+      }
+
+      try {
+        const btn = document.getElementById('connectBtn');
+        btn.disabled = true;
+        btn.textContent = 'Connecting...';
+
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+        await provider.send('eth_requestAccounts', []);
+        signer = provider.getSigner();
+        userAddress = await signer.getAddress();
+
+        // Check network
+        const network = await provider.getNetwork();
+        if (network.chainId !== 80002) {
+          showToast('Please switch to Polygon Amoy Testnet (Chain ID: 80002)', 'error');
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x13882' }],
+            });
+          } catch (e) {
+            // Network not added, try to add it
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: '0x13882',
+                chainName: 'Polygon Amoy Testnet',
+                rpcUrls: ['https://rpc-amoy.polygon.technology'],
+                nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
+                blockExplorerUrls: ['https://amoy.polygonscan.com']
+              }]
+            });
+          }
+        }
+
+        // Authenticate with backend
+        await authenticateWithBackend();
+
+        // Update UI
+        document.getElementById('walletAddress').textContent =
+          `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}`;
+        document.getElementById('walletAddress').classList.remove('hidden');
+        btn.textContent = 'Connected';
+        btn.classList.add('connected');
+
+        // Refresh data
+        await refreshData();
+        showToast('Wallet connected successfully!', 'success');
+
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || 'Failed to connect wallet', 'error');
+        document.getElementById('connectBtn').disabled = false;
+        document.getElementById('connectBtn').textContent = 'Connect MetaMask';
+      }
+    }
+
+    // Authenticate with backend
+    async function authenticateWithBackend() {
+      // Get nonce
+      const nonceRes = await fetch(`${API_BASE}/auth/nonce/${userAddress}`);
+      const nonceData = await nonceRes.json();
+
+      if (!nonceData.success) throw new Error('Failed to get nonce');
+
+      // Sign message
+      const signature = await signer.signMessage(nonceData.data.message);
+
+      // Connect
+      const connectRes = await fetch(`${API_BASE}/auth/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: userAddress, signature })
+      });
+      const connectData = await connectRes.json();
+
+      if (!connectData.success) throw new Error('Authentication failed');
+
+      jwtToken = connectData.data.token;
+      document.getElementById('authStatus').innerHTML =
+        '<span class="status-badge status-active">Authenticated</span>';
+      document.getElementById('userRole').textContent = connectData.data.user.role || 'investor';
+    }
+
+    // Handle account changes
+    function handleAccountsChanged(accounts) {
+      if (accounts.length === 0) {
+        userAddress = null;
+        jwtToken = null;
+        document.getElementById('connectBtn').textContent = 'Connect MetaMask';
+        document.getElementById('connectBtn').classList.remove('connected');
+        document.getElementById('walletAddress').classList.add('hidden');
+      } else {
+        window.location.reload();
+      }
+    }
+
+    // API helper
+    async function apiCall(method, endpoint, data = null) {
+      const options = {
+        method,
+        headers: { 'Content-Type': 'application/json' }
+      };
+
+      if (jwtToken) {
+        options.headers['Authorization'] = `Bearer ${jwtToken}`;
+      }
+
+      if (data) {
+        options.body = JSON.stringify(data);
+      }
+
+      const res = await fetch(`${API_BASE}${endpoint}`, options);
+      return res.json();
+    }
+
+    // Load token info
+    async function loadTokenInfo() {
+      try {
+        const data = await apiCall('GET', '/tokens/info');
+        if (data.success) {
+          document.getElementById('tokenName').textContent = data.data.name;
+          document.getElementById('tokenSymbol').textContent = data.data.symbol;
+          document.getElementById('totalSupply').textContent = `${parseFloat(data.data.totalSupply).toLocaleString()} ${data.data.symbol}`;
+
+          const statusEl = document.getElementById('contractStatus');
+          if (data.data.paused) {
+            statusEl.innerHTML = '<span class="status-badge status-paused">Paused</span>';
+          } else {
+            statusEl.innerHTML = '<span class="status-badge status-active">Active</span>';
+          }
+
+          if (data.data.metadata) {
+            document.getElementById('commodityType').textContent = data.data.metadata.commodityType;
+            document.getElementById('commodityUnit').textContent = data.data.metadata.unit;
+            document.getElementById('totalQuantity').textContent = data.data.metadata.totalQuantity;
+            document.getElementById('storageLocation').textContent = data.data.metadata.storageLocation;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load token info:', error);
+      }
+    }
+
+    // Refresh all data
+    async function refreshData() {
+      await loadTokenInfo();
+
+      if (userAddress) {
+        // Load balance
+        const balanceData = await apiCall('GET', `/tokens/balance/${userAddress}`);
+        if (balanceData.success) {
+          document.getElementById('userBalance').textContent =
+            `${parseFloat(balanceData.data.balance).toLocaleString()} GLDT`;
+        }
+
+        // Load whitelist status
+        const whitelistData = await apiCall('GET', `/whitelist/${userAddress}`);
+        if (whitelistData.success) {
+          const statusEl = document.getElementById('whitelistStatus');
+          if (whitelistData.data.isWhitelisted) {
+            statusEl.innerHTML = '<span class="status-badge status-whitelisted">Whitelisted</span>';
+          } else {
+            statusEl.innerHTML = '<span class="status-badge status-not-whitelisted">Not Whitelisted</span>';
+          }
+        }
+
+        // Load assets
+        await loadAssets();
+      }
+    }
+
+    // Mint tokens
+    async function mintTokens() {
+      if (!jwtToken) { showToast('Please connect wallet first', 'error'); return; }
+
+      const to = document.getElementById('mintTo').value || userAddress;
+      const amount = document.getElementById('mintAmount').value;
+      const reason = document.getElementById('mintReason').value || 'Minted via dashboard';
+
+      if (!amount || parseFloat(amount) <= 0) {
+        showToast('Please enter a valid amount', 'error');
+        return;
+      }
+
+      try {
+        showToast('Minting tokens...', 'info');
+        const data = await apiCall('POST', '/tokens/mint', { to, amount, reason });
+
+        if (data.success) {
+          showToast(`Successfully minted ${amount} tokens!`, 'success');
+          await refreshData();
+          document.getElementById('mintAmount').value = '';
+          document.getElementById('mintReason').value = '';
+        } else {
+          showToast(data.error || 'Minting failed', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Transfer tokens
+    async function transferTokens() {
+      if (!jwtToken) { showToast('Please connect wallet first', 'error'); return; }
+
+      const to = document.getElementById('transferTo').value;
+      const amount = document.getElementById('transferAmount').value;
+
+      if (!to || !amount) {
+        showToast('Please fill all fields', 'error');
+        return;
+      }
+
+      try {
+        showToast('Transferring tokens...', 'info');
+        const data = await apiCall('POST', '/tokens/transfer', { to, amount });
+
+        if (data.success) {
+          showToast(`Successfully transferred ${amount} tokens!`, 'success');
+          await refreshData();
+          document.getElementById('transferTo').value = '';
+          document.getElementById('transferAmount').value = '';
+        } else {
+          showToast(data.error || 'Transfer failed', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Burn tokens
+    async function burnTokens() {
+      if (!jwtToken) { showToast('Please connect wallet first', 'error'); return; }
+
+      const amount = document.getElementById('burnAmount').value;
+      const reason = document.getElementById('burnReason').value || 'Burned via dashboard';
+
+      if (!amount || parseFloat(amount) <= 0) {
+        showToast('Please enter a valid amount', 'error');
+        return;
+      }
+
+      try {
+        showToast('Burning tokens...', 'info');
+        const data = await apiCall('POST', '/tokens/burn', { amount, reason });
+
+        if (data.success) {
+          showToast(`Successfully burned ${amount} tokens!`, 'success');
+          await refreshData();
+          document.getElementById('burnAmount').value = '';
+          document.getElementById('burnReason').value = '';
+        } else {
+          showToast(data.error || 'Burning failed', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Add to whitelist
+    async function addToWhitelist() {
+      if (!jwtToken) { showToast('Please connect wallet first', 'error'); return; }
+
+      const address = document.getElementById('whitelistAddress').value;
+      if (!address) {
+        showToast('Please enter an address', 'error');
+        return;
+      }
+
+      try {
+        showToast('Adding to whitelist...', 'info');
+        const data = await apiCall('POST', '/whitelist/add', { address });
+
+        if (data.success) {
+          showToast('Address added to whitelist!', 'success');
+          await refreshData();
+        } else {
+          showToast(data.error || 'Failed to add to whitelist', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Remove from whitelist
+    async function removeFromWhitelist() {
+      if (!jwtToken) { showToast('Please connect wallet first', 'error'); return; }
+
+      const address = document.getElementById('whitelistAddress').value;
+      if (!address) {
+        showToast('Please enter an address', 'error');
+        return;
+      }
+
+      try {
+        showToast('Removing from whitelist...', 'info');
+        const data = await apiCall('POST', '/whitelist/remove', { address });
+
+        if (data.success) {
+          showToast('Address removed from whitelist!', 'success');
+          await refreshData();
+        } else {
+          showToast(data.error || 'Failed to remove from whitelist', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Check whitelist
+    async function checkWhitelist() {
+      const address = document.getElementById('whitelistAddress').value;
+      if (!address) {
+        showToast('Please enter an address', 'error');
+        return;
+      }
+
+      try {
+        const data = await apiCall('GET', `/whitelist/${address}`);
+
+        if (data.success) {
+          const status = data.data.isWhitelisted ? 'WHITELISTED ✅' : 'NOT WHITELISTED ❌';
+          showToast(`Address is ${status}`, data.data.isWhitelisted ? 'success' : 'info');
+        } else {
+          showToast(data.error || 'Check failed', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Pause contract
+    async function pauseContract() {
+      if (!jwtToken) { showToast('Please connect wallet first', 'error'); return; }
+
+      try {
+        showToast('Pausing contract...', 'info');
+        const data = await apiCall('POST', '/compliance/pause');
+
+        if (data.success) {
+          showToast('Contract paused!', 'success');
+          await refreshData();
+        } else {
+          showToast(data.error || 'Failed to pause', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Unpause contract
+    async function unpauseContract() {
+      if (!jwtToken) { showToast('Please connect wallet first', 'error'); return; }
+
+      try {
+        showToast('Unpausing contract...', 'info');
+        const data = await apiCall('POST', '/compliance/unpause');
+
+        if (data.success) {
+          showToast('Contract unpaused!', 'success');
+          await refreshData();
+        } else {
+          showToast(data.error || 'Failed to unpause', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Check balance
+    async function checkBalance() {
+      const address = document.getElementById('balanceAddress').value;
+      if (!address) {
+        showToast('Please enter an address', 'error');
+        return;
+      }
+
+      try {
+        const data = await apiCall('GET', `/tokens/balance/${address}`);
+
+        if (data.success) {
+          document.getElementById('balanceResult').style.display = 'block';
+          document.getElementById('checkedBalance').textContent =
+            `${parseFloat(data.data.balance).toLocaleString()} GLDT`;
+        } else {
+          showToast(data.error || 'Check failed', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Create asset
+    async function createAsset() {
+      if (!jwtToken) { showToast('Please connect wallet first', 'error'); return; }
+
+      const name = document.getElementById('assetName').value;
+      const commodityType = document.getElementById('assetCommodityType').value;
+      const quantity = document.getElementById('assetQuantity').value;
+      const unit = document.getElementById('assetUnit').value;
+      const pricePerUnit = document.getElementById('assetPrice').value;
+
+      if (!name || !quantity || !pricePerUnit) {
+        showToast('Please fill all required fields', 'error');
+        return;
+      }
+
+      try {
+        showToast('Creating asset...', 'info');
+        const data = await apiCall('POST', '/assets', {
+          name,
+          commodityType,
+          quantity: parseFloat(quantity),
+          unit,
+          pricePerUnit: parseFloat(pricePerUnit)
+        });
+
+        if (data.success) {
+          showToast('Asset created successfully!', 'success');
+          document.getElementById('assetName').value = '';
+          document.getElementById('assetQuantity').value = '';
+          document.getElementById('assetPrice').value = '';
+          await loadAssets();
+        } else {
+          showToast(data.error || 'Failed to create asset', 'error');
+        }
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+
+    // Load assets
+    async function loadAssets() {
+      if (!jwtToken) return;
+
+      try {
+        const data = await apiCall('GET', '/assets');
+        const container = document.getElementById('assetsList');
+
+        if (data.success && data.data.assets.length > 0) {
+          container.innerHTML = data.data.assets.map(asset => `
+            <div style="padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                <strong style="color: #ffd700;">${asset.name}</strong>
+                <span class="status-badge ${asset.verificationStatus === 'verified' ? 'status-active' : 'status-paused'}">
+                  ${asset.verificationStatus}
+                </span>
+              </div>
+              <div style="font-size: 0.9em; color: #888;">
+                ${asset.quantity} ${asset.unit} ${asset.commodityType} • $${asset.pricePerUnit}/unit
+              </div>
+            </div>
+          `).join('');
+        } else {
+          container.innerHTML = '<p style="color: #666;">No assets found</p>';
+        }
+      } catch (error) {
+        console.error('Failed to load assets:', error);
+      }
+    }
+  </script>
+</body>
+</html>
